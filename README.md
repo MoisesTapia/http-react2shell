@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https-react2shell.png" width="260" alt="React2Shell NSE Scanner Logo">
+</p>
+
 # React2Shell Nmap Detection Script (NSE)
 
 Detection for CVE-2025-55182 / CVE-2025-66478 – React Server Components / Next.js
