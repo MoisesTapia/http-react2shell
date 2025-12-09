@@ -5,15 +5,15 @@ local http = require "http"
 local string = require "string"
 
 description = [[
-Detects React2Shell (CVE-2025-55182 / CVE-2025-66478) in 
+Detects React2Shell (CVE-2025-55182 / CVE-2025-66478) in
 React Server Components / Next.js applications using a safe side-channel technique.
 
-The script sends a POST multipart/form-data request containing a specially crafted 
+The script sends a POST multipart/form-data request containing a specially crafted
 React Flight payload that:
   - On vulnerable servers triggers a 500 response containing the pattern E{"digest"...}
   - On patched or non-vulnerable setups does NOT produce this pattern.
 
-The script does NOT attempt any code execution nor exploit the vulnerability; 
+The script does NOT attempt any code execution nor exploit the vulnerability;
 it only triggers the documented error path used for safe detection.
 ]]
 
@@ -22,8 +22,14 @@ it only triggers the documented error path used for safe detection.
 --  nmap -p80,443 --script http-react2shell \
 --    --script-args 'react2shell.path=/,react2shell.timeout=10000' <host>
 --
--- @args react2shell.path     Path to test (default "/").
--- @args react2shell.timeout  HTTP timeout in ms (default 10000).
+--  # HTTPS (explicit)
+--  nmap -p443 --script http-react2shell \
+--    --script-args 'react2shell.path=/,https=true' <host>
+--
+-- @args react2shell.path      Path to test (default "/").
+-- @args react2shell.timeout   HTTP timeout in ms (default 10000).
+-- @args react2shell.https     Force HTTPS (boolean). Optional.
+-- @args https                 Global flag also supported to force HTTPS.
 --
 -- @output
 -- PORT   STATE SERVICE
@@ -32,15 +38,15 @@ it only triggers the documented error path used for safe detection.
 -- |   VULNERABLE: possible React2Shell (CVE-2025-55182 / CVE-2025-66478)
 -- |     Path: /
 -- |     Evidence: HTTP 500 + E{"digest" found in response
--- |_    Notes: result based on safe side-channel; verify manually and patch immediately.
+-- |_    Notes: high-fidelity side-channel; verify manually and patch immediately.
 
-author = "ChatGPT (adapted for React2Shell detection)"
+author = "ChatGPT (adapted for React2Shell detection, enhanced)"
 license = "Same as Nmap--See https://nmap.org/book/man-legal.html"
 categories = { "vuln", "safe", "discovery" }
 
 portrule = shortport.http
 
--- Builds the "safe" multipart payload similar to the side-channel described
+-- Builds a "safe" multipart payload similar to the side-channel described
 -- by researchers: two fields:
 --   field "1" = {}              (empty object)
 --   field "0" = ["$1:aa:aa"]    (attempt to access a missing property)
@@ -48,7 +54,7 @@ portrule = shortport.http
 -- On vulnerable servers this causes React to follow invalid reference chains,
 -- ending in a 500 error with a characteristic digest.
 local function build_safe_multipart_payload()
-  local boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+  local boundary = "----NmapBoundary" .. stdnse.generate_random_string(12)
 
   local body_parts = {
     "--" .. boundary .. "\r\n",
@@ -65,6 +71,16 @@ local function build_safe_multipart_payload()
   return body, content_type
 end
 
+local function matches_digest_pattern(body)
+  if not body then
+    return false
+  end
+  if body:match('E{"digest') or body:match('E{"digestId') then
+    return true
+  end
+  return false
+end
+
 local function is_potentially_vulnerable(resp)
   if not resp then
     return false, "no-response"
@@ -72,12 +88,8 @@ local function is_potentially_vulnerable(resp)
 
   -- High-fidelity side-channel check:
   --  - status must be 500
-  --  - body must contain 'E{"digest"'
-  --
-  -- Some platforms (Vercel, Netlify, etc.) inject mitigations
-  -- that may create similar patterns; to reduce false positives,
-  -- we inspect common platform headers.
-  if resp.status ~= 500 or not resp.body or not resp.body:find('E{"digest"') then
+  --  - body must contain a digest-like pattern
+  if resp.status ~= 500 or not matches_digest_pattern(resp.body) then
     return false, "no-crash-pattern"
   end
 
@@ -98,8 +110,15 @@ action = function(host, port)
   local path = stdnse.get_script_args("react2shell.path") or "/"
   local timeout = tonumber(stdnse.get_script_args("react2shell.timeout")) or 10000
 
+  -- HTTPS can be forced either by react2shell.https or generic https=true
+  local https_arg = stdnse.get_script_args("react2shell.https")
+  local https_global = stdnse.get_script_args("https")
+  local use_https = (https_arg == "true" or https_arg == true)
+                 or (https_global == "true" or https_global == true)
+
   local out = {}
   table.insert(out, ("Path: %s"):format(path))
+  table.insert(out, ("Scheme: %s"):format(use_https and "https" or "http"))
 
   local body, content_type = build_safe_multipart_payload()
 
@@ -108,18 +127,30 @@ action = function(host, port)
     ["User-Agent"] = "Nmap-React2Shell-check",
     -- Typical Server Actions / RSC headers used to route the request
     ["Next-Action"] = "x",
-    ["X-Requested-With"] = "XMLHttpRequest"
+    ["X-Requested-With"] = "XMLHttpRequest",
+    ["Accept"] = "*/*",
+    ["Connection"] = "close"
   }
 
   local opts = {
     header = headers,
-    timeout = timeout
+    timeout = timeout,
+    ssl = use_https
   }
 
-  local resp = http.post(host, port, path, opts, body)
+  local resp, err = http.post(host, port, path, opts, body)
 
   if not resp then
-    table.insert(out, "ERROR: no HTTP response received (timeout or connection failed)")
+    if err then
+      table.insert(out, ("ERROR: HTTP request failed (%s)"):format(err))
+    else
+      table.insert(out, "ERROR: no HTTP response received (connection failed or timed out)")
+    end
+    return stdnse.format_output(true, out)
+  end
+
+  if not resp.status then
+    table.insert(out, "ERROR: HTTP response received but status is nil (connection error or malformed reply)")
     return stdnse.format_output(true, out)
   end
 
@@ -127,7 +158,7 @@ action = function(host, port)
 
   if vulnerable then
     table.insert(out, "VULNERABLE: possible React2Shell (CVE-2025-55182 / CVE-2025-66478)")
-    table.insert(out, ("  Evidence: HTTP %d + E{\"digest\" found in response"):format(resp.status))
+    table.insert(out, ("  Evidence: HTTP %d + digest-like pattern found in response"):format(resp.status))
     table.insert(out, "  Notes: high-fidelity side-channel; verify manually and patch immediately.")
   else
     if reason == "mitigated-platform" then
