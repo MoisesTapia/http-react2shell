@@ -22,7 +22,7 @@ it only triggers the documented error path used for safe detection.
 --  nmap -p80,443 --script http-react2shell \
 --    --script-args 'react2shell.path=/,react2shell.timeout=10000' <host>
 --
---  # HTTPS (explicit)
+--  # Explicit HTTPS (optional, usually not needed)
 --  nmap -p443 --script http-react2shell \
 --    --script-args 'react2shell.path=/,https=true' <host>
 --
@@ -46,6 +46,17 @@ categories = { "vuln", "safe", "discovery" }
 
 portrule = shortport.http
 
+-- Simple random string generator (avoids dependency on stdnse.generate_random_string)
+local function random_string(length)
+  local charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+  local t = {}
+  for i = 1, length do
+    local idx = math.random(#charset)
+    t[i] = charset:sub(idx, idx)
+  end
+  return table.concat(t)
+end
+
 -- Builds a "safe" multipart payload similar to the side-channel described
 -- by researchers: two fields:
 --   field "1" = {}              (empty object)
@@ -54,7 +65,7 @@ portrule = shortport.http
 -- On vulnerable servers this causes React to follow invalid reference chains,
 -- ending in a 500 error with a characteristic digest.
 local function build_safe_multipart_payload()
-  local boundary = "----NmapBoundary" .. stdnse.generate_random_string(12)
+  local boundary = "----NmapBoundary" .. random_string(12)
 
   local body_parts = {
     "--" .. boundary .. "\r\n",
@@ -113,12 +124,21 @@ action = function(host, port)
   -- HTTPS can be forced either by react2shell.https or generic https=true
   local https_arg = stdnse.get_script_args("react2shell.https")
   local https_global = stdnse.get_script_args("https")
-  local use_https = (https_arg == "true" or https_arg == true)
-                 or (https_global == "true" or https_global == true)
+
+  local use_https = nil  -- nil => let http.lua decide (auto based on port)
+  if https_arg ~= nil then
+    use_https = (https_arg == "true" or https_arg == true or https_arg == "1")
+  elseif https_global ~= nil then
+    use_https = (https_global == "true" or https_global == true or https_global == "1")
+  end
 
   local out = {}
   table.insert(out, ("Path: %s"):format(path))
-  table.insert(out, ("Scheme: %s"):format(use_https and "https" or "http"))
+  if use_https == nil then
+    table.insert(out, "Scheme: auto (http/https decided by Nmap http library)")
+  else
+    table.insert(out, ("Scheme: %s (forced)"):format(use_https and "https" or "http"))
+  end
 
   local body, content_type = build_safe_multipart_payload()
 
@@ -134,9 +154,13 @@ action = function(host, port)
 
   local opts = {
     header = headers,
-    timeout = timeout,
-    ssl = use_https
+    timeout = timeout
   }
+
+  -- Only override SSL behavior if user explicitly asked for it
+  if use_https ~= nil then
+    opts.ssl = use_https
+  end
 
   local resp, err = http.post(host, port, path, opts, body)
 
