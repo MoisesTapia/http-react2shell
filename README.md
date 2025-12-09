@@ -156,6 +156,10 @@ PORT   STATE SERVICE
 |_    Notes: high-fidelity side-channel; verify manually and patch immediately.
 ```
 
+<p align="center">
+  <img src="sample-output.png" alt="React2Shell NSE Scanner Logo">
+</p>
+
 ### Connection Error
 
 ```bash
