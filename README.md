@@ -50,12 +50,22 @@ This script detects that pattern without attempting any harmful operations.
 ✔ Lightweight and suitable for red teaming, bug bounty, incident response & CI/CD scanning
 
 
+## Download & Installation
+
+### 1 Clone this repository
+
+```bash
+git clone https://github.com/MoisesTapia/http-react2shell.git
+cd http-react2shell
+```
+
+
 ## Script Location
 
 Place the file inside your Nmap scripts directory:
 
 ```bash
-/usr/share/nmap/scripts/http-react2shell.nse
+sudo cp http-react2shell.nse /usr/share/nmap/scripts/
 ```
 
 Update the script index:
