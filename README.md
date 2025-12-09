@@ -128,16 +128,46 @@ nmap -sV -p80,443 \
 
 ## Output Example
 
+### Not Vulenrable Host
+
 ```bash
 
 PORT   STATE SERVICE
 443/tcp open  https
 | http-react2shell:
+|   Path: /login
+|   Scheme: auto (http/https decided by Nmap http library)
+|   No characteristic crash pattern observed.
+|     This suggests the tested endpoint is not vulnerable or is patched,
+|_    but this is not a guarantee (other RSC/Server Actions paths may exist).
+
+```
+
+### Vulenrable Host
+
+```bash
+PORT   STATE SERVICE
+443/tcp open  https
+| http-react2shell:
+|   Path: /login
+|   Scheme: auto (http/https decided by Nmap http library)
 |   VULNERABLE: possible React2Shell (CVE-2025-55182 / CVE-2025-66478)
-|     Path: /
-|     Evidence: HTTP 500 + E{"digest" found in response
+|     Evidence: HTTP 500 + digest-like pattern found in response
 |_    Notes: high-fidelity side-channel; verify manually and patch immediately.
 ```
+
+### Connection Error
+
+```bash
+PORT   STATE SERVICE
+443/tcp open  https
+| http-react2shell:
+|   Path: /login
+|   Scheme: auto (http/https decided by Nmap http library)
+|_  ERROR: HTTP request failed (connection reset by peer)
+```
+
+
 
 ## References
 
